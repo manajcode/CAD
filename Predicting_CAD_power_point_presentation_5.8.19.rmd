@@ -1,0 +1,256 @@
+---
+title: "Predicting Coronary Artery Disease"
+author: "Michael Najarro, Cheuk Tam"
+date: "May 8, 2019"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+
+#* R-Code for project*
+```{r}
+library(pacman)
+p_load(Amelia, plyr, dplyr, glmnet, caret)
+```
+
+#####Step 1: upload the data into R
+```{r}
+cleveland <- read.table(file = "processed.cleveland.txt", sep = ",", header = TRUE)
+sum(is.na(cleveland))
+unique(cleveland$ca)
+unique(cleveland$thal)
+unique(cleveland$slope)
+str(cleveland)
+
+hungary <- read.table(file = "processed.hungarian.txt", sep = ",", header = TRUE)
+lb <- read.table(file = "processed.va.txt", sep = ",", header = TRUE)
+switzerland <- read.table(file = "processed.switzerland.txt", sep = ",", header = TRUE)
+```
+
+
+#####Step 2: combine the data into a mega data set.
+```{r}
+combined <- data.frame(rbind(cleveland,hungary,lb,switzerland))
+str(combined)
+# note: variables "slope, ca, thal, fbs" have questions marks
+```
+
+
+######step 3: clean up the data; remove quesiton marks.
+```{r}
+#Combined:
+combined$ca <- as.character(combined$ca) 
+combined$thal <- as.character(combined$thal) 
+combined <- na_if(combined, "?")
+
+missmap(combined, main = "Nas in the combined 2 data")
+str(combined)
+```
+
+
+#####Step 4: change the data types for combined to correct formats (char in data.)
+note: try to reduce complex factorial data types because multiple layers will create really complex dummy variable loaded models.
+```{r}
+#4.a) change some of the variables of combined into factors
+combined[,c(2,6,9)] <- lapply(combined[,c(2,6,9)], FUN = as.factor)
+
+#4.b)change some of the variables of combined into integers/double/numeric.
+combined[,c(4,5,7,8,10)] <- lapply(combined[,c(4,5,7,8,10)], FUN = as.numeric)
+str(combined)
+
+#4.c) now convert the response to binary and as a factor.
+combined$num <- ifelse(combined$num != 0, 1, 0)
+combined$num <- as.factor(combined$num)
+
+# 4.d) convert the 3 important predictors from character to factor to integer. 
+# slope:
+combined$slope <- as.numeric(combined$slope)
+str(combined)
+unique(combined$slope)
+
+#ca:
+combined$ca <- as.numeric((combined$ca))
+str(combined)
+unique(combined$ca)
+
+# thal: has 6 levels, bring down to 3 whole number levels. then convert to integer.
+unique(combined$thal)
+is.character(combined$thal)
+combined$thal <- as.numeric(combined$thal)
+unique(combined$thal)
+str(combined$thal)
+levels(combined$thal)
+str(combined)
+
+sum(is.na(combined$ca))/920
+```
+
+
+#####Step 5: create a new data frame from the combined data frame that excludes the ca predictor(fluoroscopy)
+dropping ca because it is redundant (similar to Thal-fluoroscopy vs thallioscopy-radioactive isotope) and it is the column with the most NAs missing.
+```{r}
+#5.a) first remove cleveland, hungary, lb, and swis data; no longer needed.
+rm(cleveland, hungary, lb, switzerland)
+
+#5.b) w/o CA:
+wo_ca <-  combined[ ,-12]
+str(wo_ca)
+missmap(wo_ca, main = "wo_ca")
+```
+
+#####Step 6A: Remove the rows with NAs for df wo_ca, and then split the data into 70:30.
+```{r}
+# exclude the nas from the w/o_ca data set
+wo_ca <- na.omit(wo_ca);
+missmap(wo_ca, main = "Nas in the wo_ca");
+str(wo_ca)
+rm(combined)
+
+# ~~~~ FOR THE PRESENTATION~~~~~
+#70-30% split:
+#30% = the test set
+set.seed((101))
+testing_percent <- sample(nrow(wo_ca), size = round(0.30 * nrow(wo_ca)))
+testing_data <- wo_ca[testing_percent,]
+nrow(testing_data)
+
+#70% = the training set.
+training_data <- wo_ca[-testing_percent, ]
+nrow(training_data)
+```
+
+#####Step 6B: Examining assumptions and summary statistics of variables
+```{r}
+str(wo_ca)
+
+densityplot(wo_ca$age, xlab = "Age (Years)")
+densityplot(wo_ca$trestbps, xlab="Resting Blood Pressure (mmHg)")
+densityplot(wo_ca$thalach, xlab="Max Heart Rate Achieved (bpm)")
+densityplot(wo_ca$cho, xlab = "Cholesterol (mg/dL)")
+densityplot(wo_ca$oldpeak, xlab="ST Depression Induced by Exercise (mm)")
+
+
+#Zero cholesterol
+summary(wo_ca$chol)
+
+wo_ca[which(wo_ca$chol == 0),]
+length(which(wo_ca$chol == 0))
+
+#wo_ca <- wo_ca[-which(wo_ca$chol == 0),]
+
+#some skewing in oldpeak
+summary(wo_ca$oldpeak)
+
+#log oldpeak + 2
+densityplot(log(wo_ca$oldpeak + 2), xlab="Log of ST Depression Induced by Exercise (mm)")
+
+#sqrt oldpeak + 1
+densityplot(sqrt(wo_ca$oldpeak + 1), xlab="Square Root of ST Depression Induced by Exercise (mm)")
+
+table(wo_ca$sex)
+table(wo_ca$cp)
+table(wo_ca$fbs)
+table(wo_ca$restecg)
+table(wo_ca$exang)
+table(wo_ca$slope)
+table(wo_ca$thal)
+table(wo_ca$num)
+
+pairs(num ~., data = wo_ca)
+round(cor(wo_ca[, c(1,4,5,8,10)]), 2)
+
+#num vars: age, trestbps, chol, thalach, oldpeak,
+summary(wo_ca$age)
+summary(wo_ca$trestbps)
+summary(wo_ca$chol)
+summary(wo_ca$thalach)
+summary(wo_ca$oldpeak)
+
+```
+
+#####Step 7: create your full and stepwise models on the training data as a way to refine your model. Use AIC to compare the  Note that AIC is not necessary in cross validation....use on full data, but necessary.
+Guide to the models:
+model A: contains thal, slope
+model B: contains slope
+model c: contains thal
+model d: contains 0 variables (exclude thal and slope)
+
+By default, ca is not included.
+```{r}
+#full models:
+full_modelA <- glm(num ~ ., data = training_data, family = "binomial")
+full_modelB <- glm(num ~ . -thal, data = training_data, family = "binomial")
+full_modelC <- glm(num ~ .-slope, data = training_data, family = "binomial")
+full_modelD <- glm(num ~ .-thal -slope, data = training_data, family = "binomial")
+
+# generate the stepwise reduced models on full models; use scope argument to exclude the stepwise procedure from affecting the important variables assigned in the definition for each model.
+scope1 <- list(lower = as.formula(num ~ thal + slope), upper = as.formula(num ~.))
+step_modelA <- step(full_modelA, trace=F, family = "binomial", scope = scope1)
+summary(step_modelA)
+
+scope2 <- list(lower = as.formula(num ~ slope), upper = as.formula(num ~.))
+step_modelB <- step(full_modelB, trace=F, family = "binomial", scope = scope2)
+summary(step_modelB)
+
+scope3 <- list(lower = as.formula(num ~ thal), upper = as.formula(num ~.))
+step_modelC <- step(full_modelC, trace=F, family = "binomial", scope = scope3)
+summary(step_modelC)
+
+step_modelD <- step(full_modelD, trace=F, family = "binomial")
+summary(step_modelD)
+
+```
+
+```{r}
+# since all models using backwards stepwise approaches not only produce more significant models than forward stepwise, all models reduce to a single stepwise model. reduce the model further by dropping two variables that weren't significant.
+full_model <- glm(num ~ ., data = training_data, family = "binomial")
+completely_reduced_model <- step(full_model, trace=F, family = "binomial")
+summary(completely_reduced_model)
+```
+
+
+#####Step 8: create variables that will store your y-values, x-values, and prediction values for a given model into 1 single vector.
+```{r}
+ys <- testing_data$num
+table(ys) # fairly balanced predictions!
+
+xs <- model.matrix(num ~ ., data=testing_data)
+n_combined <- nrow(xs)
+
+
+# 8.b) Make sure to create the following variables to hold the store predictions per model:
+stored_prepared <- c(rep(0, length(ys)))
+```
+
+
+#####Step 9:Now test the most reduced model on the 30% test data. Generate and store prediction values.
+```{r}
+#9.c)create and store predictors into a vector for a given stepwise model.
+prob_test <- predict(completely_reduced_model, newdata =  testing_data, type = "response")
+stored_prepared[prob_test > 0.5] <- "1"
+```
+
+
+#####step 10: create a function that generates the confusion matrix and calculates, sensitivity, specificity, and accuracy on the predictions for each step model.
+Note: you will run this function on all the stored predictors of a single model, in 1 analysis; no need to keep track of which predictors come from which fold, since each fold is using the same model!
+```{r}
+#10.a) create a confusion matrix model.
+confusion_matrix <- function(stored_pred, ys){
+  tb <- table(stored_pred, ys)
+  print(addmargins(tb))
+  accuracy <- (tb[1,1] + tb[2,2])/sum(tb)
+  sensitivity <- tb[2,2]/sum(tb[,2])
+  specificity <- tb[1,1]/sum(tb[,1])
+  
+  print(paste("accuracy=",round(accuracy, digits =4)))
+  print(paste("sensitivity=",round(sensitivity, digits = 4)))
+  print(paste("specificity=",round(specificity, digits = 4)))
+}
+
+#10.b) apply the confusion matrix.
+confusion_matrix(stored_pred = stored_prepared, ys= ys)
+```
+

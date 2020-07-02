@@ -17,7 +17,7 @@ d) calculated sensitivity, specificty, and a confusion matrix to estimate accura
 
 Here is a description of the following files within the R project:
 
-1. RCode_for_power_point_presentation_5.8.19.rmd: the r markdown file containing the scripts used to input, manipulate, and analyze data.
+1. Predicting_CAD_power_point_presentation_5.8.19.rmd: the r markdown file containing the scripts used to input, manipulate, and analyze data.
 
 2. processed.cleveland.txt: text file containing the medical data for patients from Cleveland.
 
