@@ -1,3 +1,4 @@
+# CAD
 Predicting CAD is an R project in which I aplied logistic regression and cross validation techniques to predict Coronary artery disease using the "Heart Disease Data set from the UCI machine learning repository (https://archive.ics.uci.edu/ml/datasets/Heart+Disease).
 
 The data was originally collected and used in Detran et al. (1989):
